@@ -1,0 +1,525 @@
+// GDL definition for a basic C-like parser
+// Supports global variables, function definitions, structs, and a more complete expression hierarchy.
+// Includes support for typedefs using transactional wrap() and satisfy().
+
+// --- Lexical Elements ---
+
+// Boundary check to ensure keywords and identifiers match full words
+IdBoundary = not(alpha | digit | '_') | eoi;
+
+// Keywords - Storage Classes
+KwStatic = lexeme("static" IdBoundary);
+KwExtern = lexeme("extern" IdBoundary);
+KwAuto = lexeme("auto" IdBoundary);
+KwRegister = lexeme("register" IdBoundary);
+
+// Keywords - Type Qualifiers
+KwConst = lexeme("const" IdBoundary) | lexeme("__const" IdBoundary) | lexeme("__const__" IdBoundary);
+KwVolatile = lexeme("volatile" IdBoundary) | lexeme("__volatile" IdBoundary) | lexeme("__volatile__" IdBoundary);
+KwRestrict = lexeme("restrict" IdBoundary) | lexeme("__restrict" IdBoundary) | lexeme("__restrict__" IdBoundary);
+
+// Keywords - Types
+KwVoid = lexeme("void" IdBoundary);
+KwChar = lexeme("char" IdBoundary);
+KwShort = lexeme("short" IdBoundary);
+KwInt = lexeme("int" IdBoundary);
+KwLong = lexeme("long" IdBoundary);
+KwFloat = lexeme("float" IdBoundary);
+KwDouble = lexeme("double" IdBoundary);
+KwSigned = lexeme("signed" IdBoundary);
+KwUnsigned = lexeme("unsigned" IdBoundary);
+KwBool = lexeme("_Bool" IdBoundary);
+KwBoolBuiltin = lexeme("bool" IdBoundary);
+KwComplex = lexeme("_Complex" IdBoundary);
+KwImaginary = lexeme("_Imaginary" IdBoundary);
+KwStruct = lexeme("struct" IdBoundary);
+KwUnion = lexeme("union" IdBoundary);
+KwEnum = lexeme("enum" IdBoundary);
+KwTypedef = lexeme("typedef" IdBoundary);
+
+// Keywords - Control Flow
+KwReturn = lexeme("return" IdBoundary);
+KwIf = lexeme("if" IdBoundary);
+KwElse = lexeme("else" IdBoundary);
+KwWhile = lexeme("while" IdBoundary);
+KwDo = lexeme("do" IdBoundary);
+KwFor = lexeme("for" IdBoundary);
+KwSwitch = lexeme("switch" IdBoundary);
+KwCase = lexeme("case" IdBoundary);
+KwDefault = lexeme("default" IdBoundary);
+KwGoto = lexeme("goto" IdBoundary);
+KwContinue = lexeme("continue" IdBoundary);
+KwBreak = lexeme("break" IdBoundary);
+KwSizeof = lexeme("sizeof" IdBoundary);
+KwTypeof = lexeme("__typeof__" IdBoundary) 
+          | lexeme("_TypeOf" IdBoundary)
+          | lexeme("typeof" IdBoundary);          
+KwInline = lexeme("inline" IdBoundary) | lexeme("__inline" IdBoundary) | lexeme("__inline__" IdBoundary);
+KwVaArg = lexeme("va_arg" IdBoundary);
+KwVaArgBuiltin = lexeme("__builtin_va_arg" IdBoundary);
+VaArgExpression = (KwVaArg | KwVaArgBuiltin) LParen AssignmentExpression Comma TypeName RParen @AST_ACTION_VA_ARG;
+
+// Keywords - Extensions
+KwOffsetof = lexeme("__offsetof__" IdBoundary) 
+            | lexeme("_Offsetof" IdBoundary) 
+            | lexeme("__builtin_offsetof" IdBoundary);
+
+KwAlignof = lexeme("__alignof__" IdBoundary) | lexeme("_Alignof" IdBoundary);
+KwAligned = lexeme("__aligned__" IdBoundary);
+KwAttribute = lexeme("__attribute__" IdBoundary);
+KwAsm = lexeme("asm" IdBoundary) | lexeme("__asm__" IdBoundary) | lexeme("__asm" IdBoundary);
+KwExtension = lexeme("__extension__" IdBoundary);
+OptionalKwExtension = KwExtension? @AST_ACTION_OPTIONAL_KW_EXTENSION;
+
+StandardReservedWord = KwStatic | KwExtern | KwAuto | KwRegister 
+             | KwConst | KwVolatile | KwRestrict
+             | KwVoid | KwChar | KwShort | KwInt | KwLong | KwFloat | KwDouble | KwSigned | KwUnsigned
+             | KwBool | KwBoolBuiltin | KwComplex | KwImaginary
+             | KwStruct | KwUnion | KwEnum | KwTypedef
+             | KwReturn | KwIf | KwElse | KwWhile | KwDo | KwFor | KwSwitch | KwCase | KwDefault | KwGoto | KwContinue 
+             | KwBreak | KwSizeof | KwInline | KwTypeof;
+
+ExtensionReservedWord = KwOffsetof | KwAlignof | KwAligned | KwAttribute | KwAsm | KwExtension;
+
+ReservedWord = StandardReservedWord | ExtensionReservedWord;
+
+Identifier = lexeme(not(ReservedWord) identifier) @AST_ACTION_IDENTIFIER;
+
+// Numbers and Literals
+HexLiteral = hex;
+OctalLiteral = octal;
+
+DecDigit = [1-9];
+DecimalLiteral = DecDigit digit* | '0';
+
+IntegerLiteralBase = (HexLiteral | OctalLiteral | DecimalLiteral) @AST_ACTION_INTEGER_BASE;
+IntegerLiteral = (IntegerLiteralBase IntegerSuffix?) @AST_ACTION_INTEGER_VALUE;
+LongSuffix = "ll" | "LL" | oneof("lL");
+IntegerSuffix = ((oneof("uU") LongSuffix?) | (LongSuffix oneof("uU")?)) @AST_ACTION_LITERAL_SUFFIX;
+
+DigitSeq = digit+;
+Exponent = oneof("eE") oneof("+-")? DigitSeq;
+FloatSuffix = oneof("fFlL") @AST_ACTION_LITERAL_SUFFIX;
+
+FloatLiteralBase = ((DigitSeq? '.' DigitSeq Exponent?)
+                 | (DigitSeq '.' Exponent?)
+                 | (DigitSeq Exponent)) @AST_ACTION_FLOAT_BASE;
+FloatLiteral = (FloatLiteralBase FloatSuffix?) @AST_ACTION_FLOAT_VALUE;
+
+NumberLiteral = lexeme((FloatLiteral | IntegerLiteral) IdBoundary);
+
+StringChar = ("\\" any) | noneof("\"\\\n\r");
+StringLiteralInner = StringChar* @AST_ACTION_STRING_LITERAL_PART;
+StringLiteralPart = lexeme('"' StringLiteralInner '"');
+StringLiteral = StringLiteralPart+ @AST_ACTION_STRING_LITERAL; 
+
+CharContent = ("\\" any) | noneof("'\\\n\r")+ @AST_ACTION_CHARACTER_LITERAL;
+CharLiteral = lexeme('\'' CharContent '\'');
+
+// Operators and Punctuation
+LParen = lexeme('(');
+RParen = lexeme(')');
+LBrace = lexeme('{');
+RBrace = lexeme('}');
+LBracket = lexeme('[');
+RBracket = lexeme(']');
+Semicolon = lexeme(';');
+Comma = lexeme(',');
+Colon = lexeme(':' not(':'));
+Ellipsis = lexeme("...") @AST_ACTION_ELLIPSIS;
+
+// Protected operators using not() to prevent prefix stealing
+Assign = lexeme('=' not('='));
+PlusAssign = lexeme("+=");
+MinusAssign = lexeme("-=");
+MulAssign = lexeme("*=");
+DivAssign = lexeme("/=");
+ModAssign = lexeme("%=");
+ShlAssign = lexeme("<<=");
+ShrAssign = lexeme(">>=");
+AndAssign = lexeme("&=");
+XorAssign = lexeme("^=");
+OrAssign = lexeme("|=");
+
+Star = lexeme('*' not('='));
+Minus = lexeme('-' not('-') not('=') not('>'));
+Plus = lexeme('+' not('+') not('='));
+Slash = lexeme('/' not('='));
+Percent = lexeme('%' not('='));
+Dot = lexeme('.');
+Arrow = lexeme("->");
+Lt = lexeme('<' not('<') not('='));
+Gt = lexeme('>' not('>') not('='));
+Le = lexeme("<=");
+Ge = lexeme(">=");
+Eq = lexeme("==");
+Ne = lexeme("!=");
+
+Amp = lexeme('&' not('&') not('='));
+Pipe = lexeme('|' not('|') not('='));
+Caret = lexeme('^' not('='));
+Tilde = lexeme('~');
+Shl = lexeme("<<" not('='));
+Shr = lexeme(">>" not('='));
+AmpAmp = lexeme("&&");
+PipePipe = lexeme("||");
+Excl = lexeme('!' not('='));
+Question = lexeme('?');
+
+// --- Grammar Rules ---
+
+StorageClassSpecifier = KwStatic | KwExtern | KwAuto | KwRegister @AST_ACTION_STORAGE_CLASS_SPECIFIER;
+StorageClassSpecifiers = StorageClassSpecifier* @AST_ACTION_STORAGE_CLASS_SPECIFIERS;
+
+TypeQualifier = KwConst | KwVolatile | KwRestrict | Attribute @AST_ACTION_TYPE_QUALIFIER;
+TypeQualifierMany = TypeQualifier* @AST_ACTION_TYPE_QUALIFIERS;
+TypeQualifierPlus = TypeQualifier+ @AST_ACTION_TYPE_QUALIFIERS;
+
+FunctionSpecifier = KwInline @AST_ACTION_FUNCTION_SPECIFIER;
+
+// --- Expression Hierarchy ---
+CompoundLiteral = LParen TypeName RParen LBrace InitializerList RBrace @AST_ACTION_COMPOUND_LITERAL;
+
+PrimaryExpression = NumberLiteral
+                  | StringLiteral
+                  | CharLiteral
+                  | CompoundLiteral
+                  | VaArgExpression
+                  | Identifier
+                  | (LParen Expression RParen);
+
+ArgumentList = delimited(AssignmentExpression, Comma);
+
+OptionalArgumentList = LParen ArgumentList? RParen @AST_ACTION_OPTIONAL_ARGUMENT_LIST;
+ArraySubscriptPart = LBracket Expression RBracket @AST_ACTION_ARRAY_SUBSCRIPT;
+MemberAccessDotPart = (Dot Identifier) @AST_ACTION_MEMBER_ACCESS_DOT;
+MemberAccessArrowPart = (Arrow Identifier) @AST_ACTION_MEMBER_ACCESS_ARROW;
+
+PostfixIncOp = lexeme("++") @AST_ACTION_POSTFIX_OPERATOR;
+PostfixDecOp = lexeme("--") @AST_ACTION_POSTFIX_OPERATOR;
+
+PostfixPart = OptionalArgumentList
+            | ArraySubscriptPart
+            | MemberAccessDotPart
+            | MemberAccessArrowPart
+            | PostfixIncOp
+            | PostfixDecOp
+            ;
+PostfixParts = PostfixPart* @AST_ACTION_POSTFIX_PARTS;
+
+PostfixExpression = PrimaryExpression PostfixParts @AST_ACTION_POSTFIX_EXPRESSION;
+
+IncOp = lexeme("++") @AST_ACTION_UNARY_OPERATOR;
+DecOp = lexeme("--") @AST_ACTION_UNARY_OPERATOR;
+
+UnaryOp = Amp | Star | Plus | Minus | Tilde | Excl @AST_ACTION_UNARY_OPERATOR;
+
+KwSizeofAST = KwSizeof @AST_ACTION_UNARY_OPERATOR;
+KwAlignofAST = KwAlignof @AST_ACTION_UNARY_OPERATOR;
+KwOffsetofAST = KwOffsetof @AST_ACTION_UNARY_OPERATOR;
+
+UnaryExpressionPrefix = (KwSizeofAST LParen TypeName RParen)
+                      | (KwSizeofAST UnaryExpression)
+                      | (KwAlignofAST LParen TypeName RParen)
+                      | (KwAlignofAST UnaryExpression)
+                      | (KwOffsetofAST LParen TypeName Comma Identifier RParen)
+                      | (UnaryOp UnaryExpression)
+                      | (IncOp UnaryExpression)
+                      | (DecOp UnaryExpression)
+                      @AST_ACTION_UNARY_EXPRESSION_PREFIX;
+
+UnaryExpression = UnaryExpressionPrefix | PostfixExpression;
+
+// Abstract declarators are used in type names (e.g., in casts)
+PointerPlus = Pointer+ @AST_ACTION_POINTER_LIST;
+AbstractDeclarator = (PointerPlus DeclaratorSuffixList) | DeclaratorSuffixPlus @AST_ACTION_ABSTRACT_DECLARATOR;
+
+TypeName = SpecifierQualifierList AbstractDeclarator? @AST_ACTION_TYPE_NAME;
+
+CastExpressionWrap = LParen TypeName RParen CastExpression @AST_ACTION_CAST_EXPRESSION;
+CastExpression = CastExpressionWrap | UnaryExpression;
+
+MulOp = Star | Slash | Percent @AST_ACTION_ARITHMETIC_OPERATOR;
+MultiplicativeExpression = chainl1(CastExpression, MulOp) @AST_ACTION_ARITHMETIC_EXPRESSION;
+
+AddOp = Plus | Minus @AST_ACTION_ARITHMETIC_OPERATOR;
+AdditiveExpression = chainl1(MultiplicativeExpression, AddOp) @AST_ACTION_ARITHMETIC_EXPRESSION;
+
+ShiftOp = Shl | Shr @AST_ACTION_SHIFT_OPERATOR;
+ShiftExpression = chainl1(AdditiveExpression, ShiftOp) @AST_ACTION_SHIFT_EXPRESSION;
+
+RelOp = Lt | Gt | Le | Ge @AST_ACTION_RELATIONAL_OPERATOR;
+RelationalExpression = chainl1(ShiftExpression, RelOp) @AST_ACTION_RELATIONAL;
+
+EqOp = Eq | Ne @AST_ACTION_EQUALITY_OPERATOR;
+EqualityExpression = chainl1(RelationalExpression, EqOp) @AST_ACTION_EQUALITY;
+
+BitwiseAndOp = Amp @AST_ACTION_BITWISE_OPERATOR;
+AndExpression = chainl1(EqualityExpression, BitwiseAndOp) @AST_ACTION_BITWISE_EXPRESSION;
+
+BitwiseXorOp = Caret @AST_ACTION_BITWISE_OPERATOR;
+ExclusiveOrExpression = chainl1(AndExpression, BitwiseXorOp) @AST_ACTION_BITWISE_EXPRESSION;
+
+BitwiseOrOp = Pipe @AST_ACTION_BITWISE_OPERATOR;
+InclusiveOrExpression = chainl1(ExclusiveOrExpression, BitwiseOrOp) @AST_ACTION_BITWISE_EXPRESSION;
+
+LogicalAndOp = AmpAmp @AST_ACTION_LOGICAL_OPERATOR;
+LogicalAndExpression = chainl1(InclusiveOrExpression, LogicalAndOp) @AST_ACTION_LOGICAL_EXPRESSION;
+
+LogicalOrOp = PipePipe @AST_ACTION_LOGICAL_OPERATOR;
+LogicalOrExpression = chainl1(LogicalAndExpression, LogicalOrOp) @AST_ACTION_LOGICAL_EXPRESSION;
+
+TernaryOperation = Question AssignmentExpression Colon ConditionalExpression @AST_ACTION_TERNARY_OPERATION;
+
+ConditionalExpression = LogicalOrExpression TernaryOperation? @AST_ACTION_CONDITIONAL_EXPRESSION;
+
+AssignmentOp = ShlAssign | ShrAssign
+                | PlusAssign | MinusAssign | MulAssign | DivAssign | ModAssign
+                | AndAssign | XorAssign | OrAssign
+                | Assign @AST_ACTION_ASSIGNMENT_OPERATOR;
+
+Assignment = UnaryExpression AssignmentOp AssignmentExpression @AST_ACTION_ASSIGNMENT;
+
+AssignmentExpression = Assignment | ConditionalExpression;
+
+Expression = chainl1(AssignmentExpression, Comma) @AST_ACTION_COMMA_EXPRESSION;
+
+// --- User Defined Types & Initializers ---
+
+Designator = (LBracket ConditionalExpression RBracket) | (Dot Identifier);
+
+Designation = Designator+ Assign @AST_ACTION_DESIGNATION;
+
+InitializerListEntry = Designation? Initializer @AST_ACTION_INITIALIZER_LIST_ENTRY;
+
+InitializerList = delimited_flex(InitializerListEntry, Comma) Comma? @AST_ACTION_INITIALIZER_LIST;
+
+Initializer = (LBrace InitializerList RBrace) | AssignmentExpression @AST_ACTION_INITIALIZER;
+
+StructDeclaratorBitfield = (Declarator? Colon ConditionalExpression) @AST_ACTION_STRUCT_DECLARATOR_BITFIELD;
+
+StructDeclarator = StructDeclaratorBitfield | Declarator @AST_ACTION_STRUCT_DECLARATOR;
+
+StructDeclaratorList = delimited(StructDeclarator, Comma) @AST_ACTION_STRUCT_DECLARATOR_LIST;
+
+// --- Attribute Support ---
+// Rule for a single attribute argument. It can be an Identifier, Literal, CastExpression, or a general Expression.
+AlignedAttribute = KwAligned LParen (Expression | TypeName) RParen;
+
+AttributeArgument = AlignedAttribute | Identifier | NumberLiteral | StringLiteral | CastExpression | Expression;
+
+// Rule for the list of arguments within an attribute.
+// This is a simplified approach; a full C attribute parser would need more complex handling for nested parentheses and expressions.
+// For now, it matches one or more AttributeArguments separated by commas.
+AttributeArgList = chainl1(AttributeArgument, Comma);
+
+// Rule for matching a C attribute: __attribute__((...))
+// We make it more flexible to handle nested parens and various head types
+AttributeHead = lexeme(identifier) | NumberLiteral | KwAligned;
+AttributeArg = (LParen AttributeArgList? RParen) | AttributeArgument;
+
+Attribute = KwAttribute LParen LParen AttributeHead AttributeArg* RParen RParen @AST_ACTION_ATTRIBUTE;
+AttributeList = Attribute* @AST_ACTION_ATTRIBUTE_LIST;
+
+// Assembler name extension: __asm__("name")
+AsmNames = KwAsm LParen StringLiteral+ RParen @AST_ACTION_ASM_NAMES;
+
+// --- End of Attribute Support Rules ---
+
+StructUnionDeclaration = OptionalKwExtension SpecifierQualifierList StructDeclaratorList? Semicolon @AST_ACTION_STRUCT_DECLARATION;
+
+StructUnionDeclarationList = (StructUnionDeclaration | PreprocessorDirective)+ @AST_ACTION_STRUCT_DECLARATION_LIST;
+
+// StructDefinition: struct with body (definition)
+StructDefinition = KwStruct AttributeList Identifier? LBrace StructUnionDeclarationList RBrace AttributeList @AST_ACTION_STRUCT_DEFINITION;
+UnionDefinition = KwUnion AttributeList Identifier? LBrace StructUnionDeclarationList RBrace AttributeList @AST_ACTION_UNION_DEFINITION;
+
+Enumerator = Identifier (Assign ConditionalExpression)? @AST_ACTION_ENUMERATOR;
+EnumElement = (PreprocessorDirective | Enumerator Comma?);
+EnumeratorList = EnumElement* @AST_ACTION_ENUMERATOR_LIST;
+EnumDefinition = KwEnum AttributeList Identifier? LBrace EnumeratorList RBrace AttributeList @AST_ACTION_ENUM_DEFINITION;
+
+// Typedef names are identifiers that have been registered
+TypedefName = satisfy(Identifier, "typedef-name", is_typedef_name, NULL) @AST_ACTION_TYPEDEF_SPECIFIER;
+
+StructTypeRef = KwStruct AttributeList Identifier @AST_ACTION_STRUCT_TYPE_REF;
+UnionTypeRef = KwUnion AttributeList Identifier @AST_ACTION_UNION_TYPE_REF;
+EnumTypeRef = KwEnum AttributeList Identifier @AST_ACTION_ENUM_TYPE_REF;
+
+KwTypeofSpecifier = (KwTypeof LParen TypeName RParen)
+                   | (KwTypeof LParen Expression RParen) 
+                   @AST_ACTION_TYPEOF_SPECIFIER;
+
+
+NonTypedefTypeSpecifier = KwVoid | KwChar | KwShort | KwInt | KwLong
+                         | KwFloat | KwDouble | KwSigned | KwUnsigned                         
+                         | KwBool | KwBoolBuiltin | KwComplex | KwImaginary
+                         | StructDefinition
+                         | StructTypeRef
+                         | UnionDefinition
+                         | UnionTypeRef
+                         | EnumDefinition
+                         | EnumTypeRef 
+                         | KwTypeofSpecifier
+                         @AST_ACTION_TYPE_SPECIFIER;
+TypeSpecifier = NonTypedefTypeSpecifier | TypedefName;
+
+// --- Declarations ---
+
+DeclarationSpecifier = StorageClassSpecifier
+                     | TypeQualifier
+                     | NonTypedefTypeSpecifier
+                     | FunctionSpecifier
+                     ;
+DeclarationSpecifiers = DeclarationSpecifier* @AST_ACTION_DECLARATION_SPECIFIERS;
+
+// Structured rule for regular declarations: [storage*, qualifiers*, func_spec?, type_spec_list, qualifiers*]
+NamedDeclSpecsRegular = StorageClassSpecifiers TypeQualifierMany FunctionSpecifier? TypeSpecifierList TypeQualifierMany @AST_ACTION_NAMED_DECL_SPECIFIERS;
+
+// Structured rule for typedef declarations: [storage*, qualifiers*, func_spec?, types*, typedef_name, qualifiers*]
+NamedDeclSpecsTypedef = StorageClassSpecifiers TypeQualifierMany FunctionSpecifier? TypeSpecifierListMany TypedefName TypeQualifierMany @AST_ACTION_NAMED_DECL_SPECIFIERS;
+
+// Wrapper rules to avoid +/* in NamedDeclSpecs
+TypeSpecifierList = NonTypedefTypeSpecifier+ @AST_ACTION_TYPE_SPECIFIER_LIST;
+TypeSpecifierListMany = NonTypedefTypeSpecifier* @AST_ACTION_TYPE_SPECIFIER_LIST;
+
+NamedDeclarationSpecifiers = NamedDeclSpecsRegular | NamedDeclSpecsTypedef;
+
+TypedefSpecifierQualifier = TypeQualifierMany TypedefName TypeQualifierMany @AST_ACTION_TYPEDEF_SPECIFIER_QUALIFIER;
+NonTypedefSpecifierQualifier = TypeQualifier | NonTypedefTypeSpecifier;
+NonTypedefSpecifierQualifierPlus = NonTypedefSpecifierQualifier+;
+SpecifierQualifierList = TypedefSpecifierQualifier | NonTypedefSpecifierQualifierPlus @AST_ACTION_SPECIFIER_QUALIFIER_LIST;
+
+// Common Declarator: supports pointers, arrays, and function pointers
+Pointer = Star TypeQualifierMany @AST_ACTION_POINTER;
+PointerManyList = Pointer* @AST_ACTION_POINTER_LIST;
+
+// Explicit rule for function pointer declarators like (*name)[size]
+FunctionPointerDeclarator = LParen Pointer Identifier DeclaratorSuffixList RParen @AST_ACTION_FUNCTION_POINTER_DECLARATOR;
+
+DirectDeclarator = (FunctionPointerDeclarator AttributeList) 
+                | (LParen Declarator RParen) 
+                | (Identifier AttributeList) @AST_ACTION_DIRECT_DECLARATOR;
+
+ParameterDeclaration = OptionalKwExtension NamedDeclarationSpecifiers (Declarator | AbstractDeclarator)?;
+
+ParameterDeclarationList = delimited_flex(ParameterDeclaration, Comma) (Comma Ellipsis)?;
+
+ParameterList = LParen ParameterDeclarationList? RParen @AST_ACTION_PARAMETER_LIST;
+
+ArraySizeQualifier = KwStatic @AST_ACTION_ARRAY_SIZE_QUALIFER;
+
+// Declarator suffix: arrays or function parameters
+DeclaratorSuffix = (LBracket (TypeQualifierMany ArraySizeQualifier? Expression) RBracket)
+                 | (LBracket (ArraySizeQualifier TypeQualifierMany Expression) RBracket)
+                 | (LBracket (TypeQualifierPlus Expression?) RBracket)
+                 | (LBracket (TypeQualifierMany Star) RBracket)
+                 | (LBracket Expression? RBracket)
+                 | ParameterList @AST_ACTION_DECLARATOR_SUFFIX;
+
+DeclaratorSuffixList = DeclaratorSuffix* @AST_ACTION_DECLARATOR_SUFFIX_LIST;
+DeclaratorSuffixPlus = DeclaratorSuffix+ @AST_ACTION_DECLARATOR_SUFFIX_LIST;
+
+Declarator = PointerManyList DirectDeclarator DeclaratorSuffixList AttributeList @AST_ACTION_DECLARATOR;
+
+InitDeclarator = Declarator AttributeList AsmNames? AttributeList (Assign Initializer)? @AST_ACTION_INIT_DECLARATOR;
+
+InitDeclaratorList = delimited(InitDeclarator, Comma) @AST_ACTION_INIT_DECLARATOR_LIST;
+
+Declaration = OptionalKwExtension NamedDeclarationSpecifiers InitDeclaratorList? Semicolon @AST_ACTION_DECLARATION;
+
+// --- Typedef Specific Rules ---
+
+// A specialized identifier that captures itself when parsed
+TypedefDefiningIdentifier = wrap(Identifier, typedef_capture_callbacks, NULL);
+
+TypedefDirectDeclarator = (LParen TypedefDeclarator RParen) | (TypedefDefiningIdentifier AttributeList) @AST_ACTION_TYPEDEF_DIRECT_DECLARATOR;
+
+// A specialized declarator that uses the capturing identifier
+TypedefDeclarator = PointerManyList TypedefDirectDeclarator DeclaratorSuffixList AttributeList @AST_ACTION_TYPEDEF_DECLARATOR;
+
+TypedefInitDeclarator = TypedefDeclarator AttributeList AsmNames? AttributeList (Assign Initializer)? @AST_ACTION_TYPEDEF_INIT_DECLARATOR;
+
+TypedefInitDeclaratorList = delimited(TypedefInitDeclarator, Comma) @AST_ACTION_TYPEDEF_INIT_DECLARATOR_LIST;
+
+// The whole typedef declaration is wrapped to commit/discard the captured names
+TypedefDeclaration = wrap(OptionalKwExtension KwTypedef NamedDeclarationSpecifiers TypedefInitDeclaratorList Semicolon, typedef_commit_callbacks, NULL) 
+                   @AST_ACTION_TYPEDEF_DECLARATION;
+
+// --- Statements ---
+
+ExpressionStatement = Expression? Semicolon @AST_ACTION_EXPRESSION_STATEMENT;
+
+// SwitchBodyStatement is used for statements inside switch bodies
+// It explicitly lists what can appear, NOT including CaseLabel/DefaultStatement
+SwitchBodyStatement = CompoundStatement
+                    | IfStatement 
+                    | SwitchStatement
+                    | WhileStatement 
+                    | DoWhileStatement 
+                    | ForStatement
+                    | Declaration
+                    | TypedefDeclaration
+                    | GotoStatement 
+                    | ContinueStatement 
+                    | BreakStatement 
+                    | ReturnStatement
+                    | ExpressionStatement
+                    | AsmStatement
+                    | PreprocessorDirective
+                    ;
+
+Statement = LabeledStatement | SwitchBodyStatement;
+
+// CaseLabel matches a single case expression followed by colon
+CaseLabel = KwCase ConditionalExpression Colon @AST_ACTION_CASE_LABEL;
+
+CaseLabels = CaseLabel+ @AST_ACTION_CASE_LABELS;
+
+SwitchBodyStatements = SwitchBodyStatement* @AST_ACTION_SWITCH_BODY_STATEMENTS;
+
+// SwitchCase groups one or more case labels with their shared body
+SwitchCase = CaseLabels SwitchBodyStatements @AST_ACTION_SWITCH_CASE;
+LabeledDefaultStatement = KwDefault Colon SwitchBodyStatements @AST_ACTION_DEFAULT_STATEMENT;
+
+// SwitchCompoundStatement is used inside switch to allow SwitchCase and default at top level
+SwitchCompoundStatement = wrap(LBrace (SwitchCase | LabeledDefaultStatement | SwitchBodyStatement)* RBrace, typedef_scope_callbacks, NULL) @AST_ACTION_COMPOUND_STATEMENT;
+
+LabeledStatement = Identifier Colon Statement @AST_ACTION_LABELED_STATEMENT;
+
+IfStatement = (KwIf LParen Expression RParen Statement (KwElse Statement)?) @AST_ACTION_IF_STATEMENT;
+
+SwitchStatement = (KwSwitch LParen Expression RParen SwitchCompoundStatement) @AST_ACTION_SWITCH_STATEMENT;
+
+WhileStatement = (KwWhile LParen Expression RParen Statement) @AST_ACTION_WHILE_STATEMENT;
+
+DoWhileStatement = (KwDo Statement KwWhile LParen Expression RParen Semicolon) @AST_ACTION_DO_WHILE_STATEMENT;
+
+ForStatement = (KwFor LParen (Declaration | ExpressionStatement) ExpressionStatement Expression? RParen Statement) @AST_ACTION_FOR_STATEMENT;
+
+GotoStatement = KwGoto Identifier Semicolon @AST_ACTION_GOTO_STATEMENT;
+ContinueStatement = KwContinue Semicolon @AST_ACTION_CONTINUE_STATEMENT;
+BreakStatement = KwBreak Semicolon @AST_ACTION_BREAK_STATEMENT;
+ReturnStatement = (KwReturn Expression? Semicolon) @AST_ACTION_RETURN_STATEMENT;
+AsmStatement = (KwAsm AttributeList LParen delimited(Expression, Comma) RParen Semicolon) @AST_ACTION_ASM_STATEMENT;
+
+CompoundStatement = wrap(LBrace Statement* RBrace, typedef_scope_callbacks, NULL) @AST_ACTION_COMPOUND_STATEMENT;
+
+// Rule to match a preprocessor directive, including support for line continuations
+PreprocessorIntegerLiteral = lexeme(IntegerLiteral);
+PreprocessorLineMarker = '#' PreprocessorIntegerLiteral StringLiteral PreprocessorIntegerLiteral* @AST_ACTION_PREPROCESSOR_LINE_MARKER;
+PreprocessorOther = lexeme('#' ("\\" any | noneof("\n\r"))*) @AST_ACTION_PREPROCESSOR_DIRECTIVE;
+PreprocessorDirective = PreprocessorLineMarker | PreprocessorOther;
+
+FunctionDefinition = NamedDeclarationSpecifiers Declarator CompoundStatement @AST_ACTION_FUNCTION_DEFINITION;
+
+TopLevelDeclaration = OptionalKwExtension (FunctionDefinition | TypedefDeclaration | Declaration) @AST_ACTION_TOP_LEVEL_DECLARATION;
+
+ExternalDeclaration = PreprocessorDirective | TopLevelDeclaration @AST_ACTION_EXTERNAL_DECLARATION;
+
+ExternalDeclarations = ExternalDeclaration+ @AST_ACTION_EXTERNAL_DECLARATIONS;
+
+TranslationUnit = ExternalDeclarations @AST_ACTION_TRANSLATION_UNIT;
+
+// The top-level rule MUST be the last one in the file.
+Program = TranslationUnit eoi;
