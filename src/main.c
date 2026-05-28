@@ -26,7 +26,6 @@ static char *output_filename = NULL;
 
 /* Preprocessing options */
 static bool preprocess_flag = true;
-static bool preprocess_only_flag = false;
 static char *include_paths[64];
 static int include_paths_count = 0;
 static char *defines[64];
@@ -311,10 +310,9 @@ epc_wrap_callbacks_t typedef_scope_callbacks = {on_scope_entry, on_scope_exit};
 
 /* --- Preprocessing --- */
 
-static int preprocess_file(char const *input_path, char const *output_path,
-                           bool output_to_stdout) {
+static int preprocess_file(char const *input_path, char const *output_path) {
   int num_args = 4;
-  if (!output_to_stdout && output_path) {
+  if (output_path) {
     num_args += 2;
   }
   num_args += (include_paths_count * 2) + (defines_count * 2);
@@ -354,7 +352,7 @@ static int preprocess_file(char const *input_path, char const *output_path,
 
   argv[arg_idx++] = strdup(input_path);
 
-  if (!output_to_stdout && output_path) {
+  if (output_path) {
     argv[arg_idx++] = strdup("-o");
     argv[arg_idx++] = strdup(output_path);
   }
@@ -604,7 +602,6 @@ static bool is_function_wanted(char const *name) {
 static void print_usage(char const *prog_name) {
   fprintf(stderr, "Usage: %s [options] <filename>\n", prog_name);
   fprintf(stderr, "Options:\n");
-  fprintf(stderr, "  -E              Preprocess only, output to stdout\n");
   fprintf(stderr, "  --no-preprocess Skip preprocessing\n");
   fprintf(
       stderr,
@@ -628,15 +625,11 @@ int main(int argc, char *argv[]) {
 
   int opt;
   int option_index = 0;
-  while ((opt = getopt_long(argc, argv, "o:hI:D:Ef:j", long_options,
+  while ((opt = getopt_long(argc, argv, "o:hI:D:f:j", long_options,
                             &option_index)) != -1) {
     switch (opt) {
     case 'o':
       output_filename = optarg;
-      break;
-    case 'E':
-      preprocess_only_flag = true;
-      preprocess_flag = true;
       break;
     case 'I':
       if (include_paths_count < 64) {
@@ -677,11 +670,6 @@ int main(int argc, char *argv[]) {
   char const *actual_input_file = filename;
   char *preprocessed_temp_file = NULL;
 
-  if (preprocess_only_flag) {
-    int result = preprocess_file(filename, NULL, true);
-    return (result == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
-  }
-
   if (should_preprocess) {
     preprocessed_temp_file = strdup("/tmp/ncc_preproc_XXXXXX");
     int fd = mkstemp(preprocessed_temp_file);
@@ -695,7 +683,7 @@ int main(int argc, char *argv[]) {
 
     if (preprocessed_temp_file != NULL) {
       int prep_result =
-          preprocess_file(filename, preprocessed_temp_file, false);
+          preprocess_file(filename, preprocessed_temp_file);
       if (prep_result != 0) {
         debug_error("Error: Preprocessing failed for %s", filename);
         free(preprocessed_temp_file);
