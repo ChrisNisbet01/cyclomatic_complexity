@@ -619,6 +619,7 @@ static void print_usage(char const *prog_name) {
 /* --- Main --- */
 
 int main(int argc, char *argv[]) {
+  debug_set_level(DEBUG_LEVEL_ERROR);
   static struct option long_options[] = {{"help", no_argument, 0, 'h'},
                                          {"no-preprocess", no_argument, 0, 256},
                                          {0, 0, 0, 0}};
