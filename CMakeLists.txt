@@ -7,6 +7,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_compile_options(-O3)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JSON_C REQUIRED IMPORTED_TARGET json-c)
+
 # --- easy_pc Integration ---
 include(FetchContent)
 
@@ -64,4 +67,5 @@ target_include_directories(cyclomatic_complexity PRIVATE
 
 target_link_libraries(cyclomatic_complexity PRIVATE
     c_grammar_svr
+    PkgConfig::JSON_C
 )

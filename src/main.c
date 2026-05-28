@@ -10,6 +10,7 @@
 #include <easy_pc/easy_pc.h>
 #include <errno.h>
 #include <getopt.h>
+#include <json-c/json.h>
 #include <spawn.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -30,6 +31,14 @@ static char *include_paths[64];
 static int include_paths_count = 0;
 static char *defines[64];
 static int defines_count = 0;
+
+/* Output options */
+static bool json_output = false;
+
+/* Function name filter */
+static char **filter_names = NULL;
+static int filter_names_count = 0;
+static int filter_names_capacity = 0;
 
 /* --- Typedef scope management --- */
 
@@ -554,6 +563,44 @@ static void collect_function_complexities_recursive(
 
 /* --- Usage --- */
 
+static void filter_names_add(char const *name) {
+  if (filter_names_capacity == 0) {
+    filter_names_capacity = 8;
+    filter_names = malloc(filter_names_capacity * sizeof(*filter_names));
+  } else if (filter_names_count >= filter_names_capacity) {
+    filter_names_capacity *= 2;
+    filter_names = realloc(filter_names,
+                           filter_names_capacity * sizeof(*filter_names));
+  }
+  if (filter_names != NULL) {
+    filter_names[filter_names_count++] = strdup(name);
+  }
+}
+
+static void filter_names_cleanup(void) {
+  if (filter_names != NULL) {
+    for (int i = 0; i < filter_names_count; i++) {
+      free(filter_names[i]);
+    }
+    free(filter_names);
+    filter_names = NULL;
+  }
+  filter_names_count = 0;
+  filter_names_capacity = 0;
+}
+
+static bool is_function_wanted(char const *name) {
+  if (filter_names_count == 0) {
+    return true;
+  }
+  for (int i = 0; i < filter_names_count; i++) {
+    if (strcmp(filter_names[i], name) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 static void print_usage(char const *prog_name) {
   fprintf(stderr, "Usage: %s [options] <filename>\n", prog_name);
   fprintf(stderr, "Options:\n");
@@ -565,6 +612,10 @@ static void print_usage(char const *prog_name) {
   fprintf(stderr,
           "  -I <dir>        Add include directory for preprocessing\n");
   fprintf(stderr, "  -D <macro>      Define macro for preprocessing\n");
+  fprintf(stderr, "  -j              Output results in JSON format\n");
+  fprintf(stderr,
+          "  -f <name>       Only include function with this name (may be "
+          "repeated)\n");
   fprintf(stderr, "  -h, --help      Display this help message\n");
 }
 
@@ -577,7 +628,7 @@ int main(int argc, char *argv[]) {
 
   int opt;
   int option_index = 0;
-  while ((opt = getopt_long(argc, argv, "o:hI:D:E", long_options,
+  while ((opt = getopt_long(argc, argv, "o:hI:D:Ef:j", long_options,
                             &option_index)) != -1) {
     switch (opt) {
     case 'o':
@@ -595,6 +646,12 @@ int main(int argc, char *argv[]) {
     case 'D':
       if (defines_count < 64)
         defines[defines_count++] = optarg;
+      break;
+    case 'j':
+      json_output = true;
+      break;
+    case 'f':
+      filter_names_add(optarg);
       break;
     case 256:
       preprocess_flag = false;
@@ -723,11 +780,39 @@ int main(int argc, char *argv[]) {
       qsort(results.entries, results.count, sizeof(*results.entries),
             compare_complexity_desc);
 
-      /* Print results */
-      for (size_t i = 0; i < results.count; i++) {
-        func_complexity_t *f = &results.entries[i];
-        fprintf(stdout, "%s:%zu: function '%s' has cyclomatic complexity %u\n",
-                f->filename, f->line_number, f->function_name, f->complexity);
+      /* Output results */
+      if (json_output) {
+        struct json_object *arr = json_object_new_array();
+        for (size_t i = 0; i < results.count; i++) {
+          func_complexity_t *f = &results.entries[i];
+          if (!is_function_wanted(f->function_name)) {
+            continue;
+          }
+          struct json_object *obj = json_object_new_object();
+          json_object_object_add(obj, "function_name",
+                                 json_object_new_string(f->function_name));
+          json_object_object_add(obj, "complexity",
+                                 json_object_new_int((int)f->complexity));
+          json_object_object_add(obj, "line_number",
+                                 json_object_new_int((int)f->line_number));
+          json_object_object_add(obj, "source_file",
+                                 json_object_new_string(f->filename));
+          json_object_array_add(arr, obj);
+        }
+        fprintf(stdout, "%s\n",
+                json_object_to_json_string_ext(arr, JSON_C_TO_STRING_PLAIN));
+        json_object_put(arr);
+      } else {
+        for (size_t i = 0; i < results.count; i++) {
+          func_complexity_t *f = &results.entries[i];
+          if (!is_function_wanted(f->function_name)) {
+            continue;
+          }
+          fprintf(stdout,
+                  "%s:%zu: function '%s' has cyclomatic complexity %u\n",
+                  f->filename, f->line_number, f->function_name,
+                  f->complexity);
+        }
       }
 
       free(results.entries);
@@ -751,6 +836,8 @@ int main(int argc, char *argv[]) {
     remove(preprocessed_temp_file);
     free(preprocessed_temp_file);
   }
+
+  filter_names_cleanup();
 
   return exit_code;
 }
